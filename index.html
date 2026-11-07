@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HDFS Simulator</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 16px rgba(0,0,0,0.1); }
+        h2 { color: #0052cc; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; font-size: 14px; margin-bottom: 20px; }
+        .input-group { background: #f9fbfd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #e1e4e8; }
+        label { font-size: 14px; font-weight: bold; color: #444; display: block; margin-bottom: 5px; }
+        input, select { width: 100%; padding: 10px; border: 2px solid #e1e4e8; border-radius: 6px; box-sizing: border-box; font-size: 16px; margin-bottom: 15px; outline: none; }
+        input:focus, select:focus { border-color: #0052cc; }
+        .button-group { display: flex; gap: 10px; }
+        button { flex: 1; background-color: #0052cc; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; transition: background 0.3s; }
+        button:active { background-color: #003d99; }
+        button.reset-btn { background-color: #e53e3e; }
+        button.reset-btn:active { background-color: #c53030; }
+        
+        .cluster-view { display: none; margin-top: 20px; }
+        .namenode { background: #fff3cd; border: 2px solid #ffeeba; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        .namenode h3 { margin: 0 0 10px 0; color: #856404; font-size: 16px; }
+        .metadata-list { font-family: monospace; font-size: 13px; color: #555; margin: 0; padding-left: 15px; }
+        
+        .datanodes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .datanode { background: #e9f2ff; border: 2px solid #b3d4ff; border-radius: 8px; padding: 15px; min-height: 80px; }
+        .datanode h3 { margin: 0 0 10px 0; color: #0052cc; font-size: 15px; text-align: center; border-bottom: 1px solid #b3d4ff; padding-bottom: 5px; }
+        
+        .block { display: inline-block; background: #0052cc; color: white; padding: 5px 10px; border-radius: 4px; margin: 4px; font-size: 13px; font-weight: bold; animation: popIn 0.4s ease-out; }
+        
+        @keyframes popIn { 0% { transform: scale(0); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        
+        .loader { text-align: center; color: #0052cc; font-weight: bold; display: none; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 40px; font-size: 14px; color: #777; font-weight: bold; line-height: 1.6; border-top: 1px solid #eee; padding-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🗄️ HDFS Simulator</h2>
+    <p class="subtitle">See how massive files are split and replicated.</p>
+    
+    <div class="input-group">
+        <label>File Name</label>
+        <input type="text" id="fileName" value="student_records.csv">
+        
+        <label>File Size (in MB)</label>
+        <input type="number" id="fileSize" value="300">
+        
+        <label>Replication Factor (Default: 3)</label>
+        <select id="repFactor">
+            <option value="1">1 (No backup)</option>
+            <option value="2">2 Replicas</option>
+            <option value="3" selected>3 Replicas (HDFS Default)</option>
+        </select>
+    </div>
+
+    <div class="button-group">
+        <button onclick="uploadFile()" id="uploadBtn">Upload to HDFS</button>
+        <button onclick="resetCluster()" class="reset-btn">Clear Cluster</button>
+    </div>
+
+    <div id="loader" class="loader">⚙️ NameNode is splitting the file...</div>
+
+    <div id="clusterView" class="cluster-view">
+        <div class="namenode">
+            <h3>🧠 NameNode (Metadata & Block Location)</h3>
+            <ul id="metadataLog" class="metadata-list"></ul>
+        </div>
+        
+        <div class="datanodes-grid">
+            <div class="datanode" id="dn1"><h3>DataNode 1</h3><div id="dn1-blocks"></div></div>
+            <div class="datanode" id="dn2"><h3>DataNode 2</h3><div id="dn2-blocks"></div></div>
+            <div class="datanode" id="dn3"><h3>DataNode 3</h3><div id="dn3-blocks"></div></div>
+            <div class="datanode" id="dn4"><h3>DataNode 4</h3><div id="dn4-blocks"></div></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        Developed by Abhay Mirashi<br>
+        All rights reserved with admin
+    </div>
+</div>
+
+<script>
+    const BLOCK_SIZE = 128; // HDFS default block size in MB
+
+    function uploadFile() {
+        const fileName = document.getElementById('fileName').value || "file.txt";
+        const fileSize = parseInt(document.getElementById('fileSize').value);
+        const repFactor = parseInt(document.getElementById('repFactor').value);
+        const btn = document.getElementById('uploadBtn');
+        const loader = document.getElementById('loader');
+        
+        if (!fileSize || fileSize <= 0) {
+            alert("Please enter a valid file size!");
+            return;
+        }
+
+        // Reset previous views
+        document.getElementById('metadataLog').innerHTML = "";
+        for(let i=1; i<=4; i++) document.getElementById(`dn${i}-blocks`).innerHTML = "";
+        
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        document.getElementById('clusterView').style.display = 'none';
+        loader.style.display = 'block';
+
+        const numBlocks = Math.ceil(fileSize / BLOCK_SIZE);
+        let metadataHTML = `<li>File: ${fileName} (${fileSize}MB) -> Split into ${numBlocks} blocks of 128MB</li>`;
+        
+        // HDFS Logic: Distribute blocks
+        let dnStorage = { 1: [], 2: [], 3: [], 4: [] };
+        
+        for (let b = 1; b <= numBlocks; b++) {
+            let blockName = `B${b}`;
+            let availableNodes = [1, 2, 3, 4];
+            let chosenNodes = [];
+            
+            // Randomly select DataNodes based on replication factor
+            for (let r = 0; r < repFactor; r++) {
+                let randomIndex = Math.floor(Math.random() * availableNodes.length);
+                let selectedNode = availableNodes[randomIndex];
+                chosenNodes.push(selectedNode);
+                dnStorage[selectedNode].push(blockName);
+                availableNodes.splice(randomIndex, 1); // Remove so we don't put duplicate blocks on same node
+            }
+            
+            metadataHTML += `<li>${blockName} stored on DataNodes: [${chosenNodes.sort().join(', ')}]</li>`;
+        }
+
+        // Simulate network delay for effect
+        setTimeout(() => {
+            loader.innerText = "📦 Distributing replicas to DataNodes...";
+            document.getElementById('metadataLog').innerHTML = metadataHTML;
+            document.getElementById('clusterView').style.display = 'block';
+        }, 1200);
+
+        setTimeout(() => {
+            loader.style.display = 'none';
+            // Render blocks on DataNodes
+            for(let i=1; i<=4; i++) {
+                let blocksHTML = dnStorage[i].map(blk => `<span class="block">${blk}</span>`).join('');
+                document.getElementById(`dn${i}-blocks`).innerHTML = blocksHTML;
+            }
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            loader.innerText = "⚙️ NameNode is splitting the file..."; // Reset loader text for next time
+        }, 2500);
+    }
+
+    function resetCluster() {
+        document.getElementById('fileSize').value = "300";
+        document.getElementById('fileName').value = "student_records.csv";
+        document.getElementById('clusterView').style.display = 'none';
+    }
+</script>
+</body>
+</html>
